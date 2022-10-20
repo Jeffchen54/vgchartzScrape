@@ -1,9 +1,11 @@
+import time
 from bs4 import BeautifulSoup, element
-import urllib
+import urllib.request   # .request prefix required
 import pandas as pd
+import os               # To output to current directory
 import numpy as np
 
-pages = 19
+pages = 64 # Should be all pages hopefully
 rec_count = 0
 rank = []
 gname = []
@@ -30,20 +32,21 @@ urltail += '&showlastupdate=0&showothersales=1&showgenre=1&sort=GL'
 for page in range(1, pages):
     surl = urlhead + str(page) + urltail
     r = urllib.request.urlopen(surl).read()
-    soup = BeautifulSoup(r)
+    soup = BeautifulSoup(r, features="lxml")
     print(f"Page: {page}")
 
     # vgchartz website is really weird so we have to search for
     # <a> tags with game urls
+
     game_tags = list(filter(
-        lambda x: x.attrs['href'].startswith('http://www.vgchartz.com/game/'),
+        lambda x: x.get('href').startswith('https://www.vgchartz.com/game/'),    # Changed the old get line, also http is no longer used 
         # discard the first 10 elements because those
         # links are in the navigation bar
-        soup.find_all("a")
+        soup.find_all("a", href=True)   # Adjusted to only take exisitng href
     ))[10:]
 
+    # This line can be boosted by multithreading but may not be feasible due to rate limiting
     for tag in game_tags:
-
         # add name to list
         gname.append(" ".join(tag.string.split()))
         print(f"{rec_count + 1} Fetch data for game {gname[-1]}")
@@ -87,10 +90,15 @@ for page in range(1, pages):
                 year_to_add = np.int32("20" + release_year)
             year.append(year_to_add)
 
-        # go to every individual website to get genre info
-        url_to_game = tag.attrs['href']
-        site_raw = urllib.request.urlopen(url_to_game).read()
-        sub_soup = BeautifulSoup(site_raw, "html.parser")
+        # go to every individual website to get genre info, added try catch for rate limiting
+        try:
+            url_to_game = tag.attrs['href']
+            site_raw = urllib.request.urlopen(url_to_game).read()
+            sub_soup = BeautifulSoup(site_raw, "html.parser")
+        except Exception as e:     # Too lazy to list every exception
+            print("HTTP error has occured, sleeping for 5 seconds. Description is below")
+            print(e)
+            time.sleep(5)
         # again, the info box is inconsistent among games so we
         # have to find all the h2 and traverse from that to the genre name
         h2s = sub_soup.find("div", {"id": "gameGenInfoBox"}).find_all('h2')
@@ -127,4 +135,10 @@ df = df[[
     'Rank', 'Name', 'Platform', 'Year', 'Genre',
     'Publisher', 'Developer', 'Critic_Score', 'User_Score',
     'NA_Sales', 'PAL_Sales', 'JP_Sales', 'Other_Sales', 'Global_Sales']]
-df.to_csv("vgsales.csv", sep=",", encoding='utf-8', index=False)
+
+# Changed output file logic
+outfile = os.path.join(os.path.abspath("."), "vgsales.csv")
+if os.path.exists(outfile):
+    os.remove(outfile)
+df.to_csv(outfile, sep=",", encoding='utf-8', index=False) # Now outputs to the current directory
+print("Saved to {outfile}".format(outfile=outfile))
